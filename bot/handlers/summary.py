@@ -52,10 +52,12 @@ async def collect_coin_data(context: ContextTypes.DEFAULT_TYPE, coin: dict) -> d
     cmc = context.bot_data["cmc"]
     dex = context.bot_data["dex"]
     twitter = context.bot_data["twitter"]
+    crypto_news = context.bot_data["crypto_news"]
 
     symbol = coin["symbol"]
+    name = coin.get("name", symbol)
 
-    # Fetch data from all sources in parallel-ish manner
+    # Fetch data from all sources
     cmc_data = await cmc.get_quote(symbol)
     dex_pairs = await dex.get_token_data(coin)
 
@@ -69,13 +71,19 @@ async def collect_coin_data(context: ContextTypes.DEFAULT_TYPE, coin: dict) -> d
 
     tweets = await twitter.search_tweets(tw_queries, max_tweets=15)
 
+    # Crypto news (free, no API key needed)
+    news_keywords = [symbol.lower(), name.lower()]
+    news_articles = await crypto_news.fetch_news(news_keywords, limit=8)
+
     return {
         "cmc_data": cmc_data,
         "dex_pairs": dex_pairs,
         "tweets": tweets,
+        "news_articles": news_articles,
         "cmc_formatted": cmc.format_quote(cmc_data),
         "dex_formatted": dex.format_pair_data(dex_pairs),
         "twitter_formatted": twitter.format_tweets(tweets),
+        "news_formatted": crypto_news.format_news(news_articles, news_keywords),
     }
 
 
@@ -91,6 +99,11 @@ async def generate_coin_summary(
     # Collect data
     data = await collect_coin_data(context, coin)
 
+    # Combine Twitter + crypto news into one "news" section for AI
+    news_combined = data["twitter_formatted"]
+    if data.get("news_formatted"):
+        news_combined += "\n\n" + data["news_formatted"]
+
     # Generate AI summary
     summary = await ai.analyze_with_context(
         db=db,
@@ -99,7 +112,7 @@ async def generate_coin_summary(
         report_type=report_type,
         market_data=data["cmc_formatted"],
         dex_data=data["dex_formatted"],
-        twitter_data=data["twitter_formatted"],
+        twitter_data=news_combined,
     )
 
     # Save summary to database
@@ -107,6 +120,7 @@ async def generate_coin_summary(
         "cmc": data["cmc_formatted"],
         "dex": data["dex_formatted"],
         "twitter": data["twitter_formatted"],
+        "news": data.get("news_formatted", ""),
     }, default=str)
     await db.save_summary(coin["symbol"], report_type, summary, raw_data)
 
@@ -326,60 +340,63 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle news menu button."""
+    """Handle news menu button — shows CryptoCompare news + Twitter if available."""
     query = update.callback_query
     await query.answer()
 
     db = context.bot_data["db"]
     twitter = context.bot_data["twitter"]
+    crypto_news = context.bot_data["crypto_news"]
 
     await db.log_action(update.effective_user.id, "news_request")
 
-    if not twitter.apify_api_key:
-        await query.edit_message_text(
-            "📰 *Latest News*\n\n"
-            "⚠️ Twitter/X news scraping requires an Apify API key.\n"
-            "Please ask the admin to configure it.\n\n"
-            "In the meantime, you can get a full summary which includes "
-            "all available data sources.",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📊 Get Summary Instead", callback_data="menu_summary")],
-                [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_main")],
-            ]),
-        )
-        return
-
-    await query.edit_message_text("⏳ Fetching latest news from Twitter/X...")
+    await query.edit_message_text("⏳ Fetching latest crypto news...")
 
     coins = await db.get_active_coins()
-    all_tweets_text = []
+    sections = []
 
+    # --- CryptoCompare news (always available, free) ---
+    all_keywords = []
     for coin in coins:
-        tw_queries = []
-        if coin.get("twitter_queries"):
-            try:
-                tw_queries = json.loads(coin["twitter_queries"])
-            except (json.JSONDecodeError, TypeError):
-                tw_queries = [f"#{coin['symbol']}"]
+        all_keywords.extend([coin["symbol"].lower(), coin.get("name", "").lower()])
+    articles = await crypto_news.fetch_news(all_keywords, limit=8)
+    if articles:
+        sections.append("📰 Crypto News Headlines\n")
+        for a in articles[:8]:
+            title = a.get("title", "No title")
+            source = a.get("source_info", {}).get("name", "") or a.get("source", "")
+            src_tag = f" ({source})" if source else ""
+            sections.append(f"  • {title}{src_tag}")
+        sections.append("")
 
-        tweets = await twitter.search_tweets(tw_queries, max_tweets=5)
-        if tweets:
-            all_tweets_text.append(f"\n🪙 *{coin['name']}* ({coin['symbol']}):")
-            for t in tweets[:5]:
-                text = t.get("full_text") or t.get("text") or t.get("content") or "N/A"
-                author = (t.get("user", {}).get("screen_name")
-                         or t.get("author", {}).get("userName") or "Unknown")
-                if len(text) > 150:
-                    text = text[:150] + "..."
-                all_tweets_text.append(f"  • @{author}: {text}")
+    # --- Twitter/X (only if Apify key is configured) ---
+    if twitter.apify_api_key:
+        for coin in coins:
+            tw_queries = []
+            if coin.get("twitter_queries"):
+                try:
+                    tw_queries = json.loads(coin["twitter_queries"])
+                except (json.JSONDecodeError, TypeError):
+                    tw_queries = [f"#{coin['symbol']}"]
 
-    if all_tweets_text:
-        msg = "📰 *Latest News from Twitter/X*\n" + "\n".join(all_tweets_text)
+            tweets = await twitter.search_tweets(tw_queries, max_tweets=5)
+            if tweets:
+                sections.append(f"🐦 {coin['name']} ({coin['symbol']}) — Twitter/X")
+                for t in tweets[:5]:
+                    text = t.get("full_text") or t.get("text") or t.get("content") or "N/A"
+                    author = (t.get("user", {}).get("screen_name")
+                             or t.get("author", {}).get("userName") or "Unknown")
+                    if len(text) > 150:
+                        text = text[:150] + "..."
+                    sections.append(f"  • @{author}: {text}")
+                sections.append("")
+
+    if sections:
+        msg = "📰 Latest News\n\n" + "\n".join(sections)
     else:
         msg = "📰 No recent news found for tracked coins."
 
-    # Split if too long
+    # Trim if too long
     if len(msg) > 4000:
         msg = msg[:4000] + "\n..."
 
