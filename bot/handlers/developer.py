@@ -333,7 +333,7 @@ async def show_system_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🧠 AI Memory entries: {len(memories)}\n\n"
         f"🤖 AI Model: `{config.ai_model}`\n"
         f"📡 CMC API: {'✅' if config.coinmarketcap_api_key else '❌'}\n"
-        f"🐦 Apify: {'✅' if config.apify_api_key else '❌'}\n"
+        f"🐦 Twitter/X: ✅ (Nitter RSS — free)\n"
         f"🧠 OpenRouter: {'✅' if config.openrouter_api_key else '❌'}\n"
     )
 

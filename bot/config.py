@@ -14,7 +14,9 @@ class Config:
     # API Keys
     coinmarketcap_api_key: str = ""
     openrouter_api_key: str = ""
-    apify_api_key: str = ""
+
+    # Nitter instances (comma-separated, optional override)
+    nitter_instances: str = ""
 
     # Database
     db_path: str = "bot.db"
@@ -38,7 +40,7 @@ class Config:
             admin_password=os.getenv("ADMIN_PASSWORD", "admin123"),
             coinmarketcap_api_key=os.getenv("COINMARKETCAP_API_KEY", ""),
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
-            apify_api_key=os.getenv("APIFY_API_KEY", ""),
+            nitter_instances=os.getenv("NITTER_INSTANCES", ""),
             db_path=os.getenv("DB_PATH", "bot.db"),
             support_address="0x5F4fe992a847e6B3cA07EBb379Ae02608D21BAb3",
             ai_model=os.getenv("AI_MODEL", "google/gemma-3n-e4b-it"),

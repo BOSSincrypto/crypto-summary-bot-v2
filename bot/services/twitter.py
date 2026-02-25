@@ -1,159 +1,163 @@
+import re
+import feedparser
 import httpx
 import logging
-import json
+from html import unescape
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-APIFY_BASE = "https://api.apify.com/v2"
+# Public Nitter instances with RSS support (fallback order)
+DEFAULT_NITTER_INSTANCES = [
+    "https://nitter.poast.org",
+    "https://nitter.privacyredirect.com",
+    "https://xcancel.com",
+    "https://nitter.space",
+    "https://nitter.catsarch.com",
+    "https://nitter.tiekoetter.com",
+]
 
 
 class TwitterService:
-    """Twitter/X news scraper using Apify actors."""
+    """Twitter/X feed reader using Nitter RSS (free, no API key needed)."""
 
-    def __init__(self, apify_api_key: str = ""):
-        self.apify_api_key = apify_api_key
-        # apidojo/tweet-scraper is the most popular Apify Twitter actor (37k+ users)
-        self.actor_id = "apidojo/tweet-scraper"
+    def __init__(self, nitter_instances: Optional[list[str]] = None):
+        self.instances = nitter_instances or list(DEFAULT_NITTER_INSTANCES)
 
     async def search_tweets(self, queries: list[str], max_tweets: int = 20) -> list[dict]:
-        """Search Twitter for mentions using Apify Twitter Scraper."""
-        if not self.apify_api_key:
-            logger.info("Apify API key not configured, skipping Twitter search")
+        """Search Twitter via Nitter RSS search feeds.
+
+        Each query is turned into a Nitter search RSS URL.  The method
+        tries multiple Nitter instances until one responds.
+        """
+        if not queries:
             return []
 
-        all_tweets = []
-        for query in queries[:5]:  # Limit queries to save API calls
-            tweets = await self._run_search(query, max_tweets=max_tweets // len(queries) + 1)
-            all_tweets.extend(tweets)
+        all_entries: list[dict] = []
+        per_query = max(max_tweets // max(len(queries), 1) + 1, 5)
+        for query in queries[:5]:
+            entries = await self._fetch_search_rss(query, limit=per_query)
+            all_entries.extend(entries)
 
-        # Deduplicate by tweet ID
-        seen_ids = set()
-        unique = []
-        for tweet in all_tweets:
-            tid = tweet.get("id") or tweet.get("id_str") or tweet.get("url", "")
-            if tid not in seen_ids:
-                seen_ids.add(tid)
-                unique.append(tweet)
+        # Deduplicate by link
+        seen: set[str] = set()
+        unique: list[dict] = []
+        for entry in all_entries:
+            key = entry.get("link", entry.get("text", ""))
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(entry)
 
         return unique[:max_tweets]
 
-    async def _run_search(self, query: str, max_tweets: int = 10) -> list[dict]:
-        """Run an Apify actor to search tweets."""
-        try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                # Start the actor run
-                run_input = {
-                    "searchTerms": [query],
-                    "maxTweets": max_tweets,
-                    "sort": "Latest",
-                    "tweetLanguage": "en",
-                }
+    async def _fetch_search_rss(self, query: str, limit: int = 10) -> list[dict]:
+        """Fetch search results from Nitter RSS, trying instances in order."""
+        rss_path = f"/search/rss?f=tweets&q={query}"
 
-                # Try the synchronous run endpoint (waits for completion)
-                resp = await client.post(
-                    f"{APIFY_BASE}/acts/{self.actor_id}/run-sync-get-dataset-items",
-                    params={"token": self.apify_api_key},
-                    json=run_input,
-                    timeout=120,
-                )
-
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if isinstance(data, list):
-                        # Filter out {"noResults": true} placeholders
-                        return [t for t in data if not t.get("noResults")]
-                    return []
-                else:
-                    logger.warning(
-                        f"Apify actor run failed (status {resp.status_code}): {resp.text[:200]}"
-                    )
-                    # Try alternative actor
-                    return await self._run_alternative_search(client, query, max_tweets)
-
-        except Exception as e:
-            logger.error(f"Twitter search failed for '{query}': {e}")
-            return []
-
-    async def _run_alternative_search(self, client: httpx.AsyncClient,
-                                       query: str, max_tweets: int) -> list[dict]:
-        """Try alternative Apify actors for Twitter search."""
-        alt_actors = [
-            "apidojo/twitter-scraper-lite",
-            "microworlds/twitter-scraper",
-        ]
-        for actor in alt_actors:
+        for instance in self.instances:
+            url = instance.rstrip("/") + rss_path
             try:
-                run_input = {
-                    "searchTerms": [query],
-                    "maxItems": max_tweets,
-                    "sort": "Latest",
-                }
-                resp = await client.post(
-                    f"{APIFY_BASE}/acts/{actor}/run-sync-get-dataset-items",
-                    params={"token": self.apify_api_key},
-                    json=run_input,
-                    timeout=120,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if isinstance(data, list):
-                        filtered = [t for t in data if not t.get("noResults")]
-                        if filtered:
-                            return filtered
+                entries = await self._parse_feed(url, limit)
+                if entries:
+                    logger.info(
+                        f"Nitter RSS success: {instance} returned "
+                        f"{len(entries)} results for '{query}'"
+                    )
+                    return entries
             except Exception as e:
-                logger.debug(f"Alt actor {actor} failed: {e}")
+                logger.debug(f"Nitter instance {instance} failed for '{query}': {e}")
                 continue
+
+        logger.warning(f"All Nitter instances failed for query '{query}'")
         return []
+
+    async def fetch_user_timeline(self, username: str, limit: int = 10) -> list[dict]:
+        """Fetch a user's timeline via Nitter RSS."""
+        rss_path = f"/{username.lstrip('@')}/rss"
+
+        for instance in self.instances:
+            url = instance.rstrip("/") + rss_path
+            try:
+                entries = await self._parse_feed(url, limit)
+                if entries:
+                    logger.info(
+                        f"Nitter RSS: got {len(entries)} tweets "
+                        f"from @{username} via {instance}"
+                    )
+                    return entries
+            except Exception as e:
+                logger.debug(f"Nitter instance {instance} failed for @{username}: {e}")
+                continue
+
+        logger.warning(f"All Nitter instances failed for @{username}")
+        return []
+
+    async def _parse_feed(self, url: str, limit: int = 10) -> list[dict]:
+        """Download and parse an RSS feed, returning normalised tweet dicts."""
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                headers={"User-Agent": "CryptoSummaryBot/2.0"},
+            )
+            resp.raise_for_status()
+
+        feed = feedparser.parse(resp.text)
+        if feed.bozo and not feed.entries:
+            raise ValueError(f"Feed parse error: {feed.bozo_exception}")
+
+        results: list[dict] = []
+        for entry in feed.entries[:limit]:
+            # Clean HTML tags from summary/description
+            raw_text = entry.get("summary") or entry.get("title") or ""
+            clean_text = self._strip_html(unescape(raw_text))
+
+            # Extract author from dc:creator or Nitter URL
+            author = entry.get("author", "") or entry.get("dc_creator", "")
+            if not author and "/" in entry.get("link", ""):
+                parts = entry.get("link", "").split("/")
+                for p in parts:
+                    if p.startswith("@"):
+                        author = p.lstrip("@")
+                        break
+
+            published = entry.get("published") or entry.get("updated") or ""
+
+            results.append({
+                "text": clean_text,
+                "author": author,
+                "link": entry.get("link", ""),
+                "published": published,
+                "title": entry.get("title", ""),
+            })
+
+        return results
+
+    @staticmethod
+    def _strip_html(text: str) -> str:
+        """Remove HTML tags from text."""
+        clean = re.sub(r"<[^>]+>", " ", text)
+        clean = re.sub(r"\s+", " ", clean).strip()
+        return clean
 
     def format_tweets(self, tweets: list[dict]) -> str:
         """Format tweet data into readable text for AI analysis."""
         if not tweets:
-            return "No Twitter/social media data available (Apify API key may not be configured)"
+            return "No Twitter/X social media data available."
 
-        lines = ["Source: Twitter/X (via Apify)\n"]
+        lines = ["Source: Twitter/X (via Nitter RSS)\n"]
         for i, tweet in enumerate(tweets[:15]):
-            # Handle different tweet data formats from various Apify actors
-            text = (
-                tweet.get("full_text")
-                or tweet.get("text")
-                or tweet.get("tweet_text")
-                or tweet.get("content")
-                or "N/A"
-            )
-            author = (
-                tweet.get("user", {}).get("screen_name")
-                or tweet.get("author", {}).get("userName")
-                or tweet.get("username")
-                or tweet.get("screen_name")
-                or "Unknown"
-            )
-            likes = (
-                tweet.get("favorite_count")
-                or tweet.get("likeCount")
-                or tweet.get("likes")
-                or 0
-            )
-            retweets = (
-                tweet.get("retweet_count")
-                or tweet.get("retweetCount")
-                or tweet.get("retweets")
-                or 0
-            )
-            created = (
-                tweet.get("created_at")
-                or tweet.get("createdAt")
-                or tweet.get("date")
-                or "N/A"
-            )
+            text = tweet.get("text") or tweet.get("title") or "N/A"
+            author = tweet.get("author") or "Unknown"
+            published = tweet.get("published") or "N/A"
+            link = tweet.get("link", "")
 
-            # Truncate long tweets
             if len(text) > 200:
                 text = text[:200] + "..."
 
-            lines.append(f"Tweet #{i+1} by @{author} ({created}):")
+            lines.append(f"Tweet #{i+1} by @{author} ({published}):")
             lines.append(f"  {text}")
-            lines.append(f"  Likes: {likes} | Retweets: {retweets}")
+            if link:
+                lines.append(f"  Link: {link}")
             lines.append("")
 
         return "\n".join(lines)
