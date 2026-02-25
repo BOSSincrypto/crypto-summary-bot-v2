@@ -2,8 +2,32 @@ import logging
 import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
+
+
+async def _safe_send(bot, chat_id, text, reply_markup=None):
+    """Send message with Markdown, falling back to plain text on parse error."""
+    try:
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup,
+        )
+    except Exception as md_err:
+        logger.warning(f"Markdown send failed ({md_err}), retrying as plain text")
+        plain = text.replace('*', '').replace('_', '')
+        try:
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=plain,
+                reply_markup=reply_markup,
+            )
+        except Exception as plain_err:
+            logger.error(f"Plain-text send also failed: {plain_err}")
+            raise
 
 # Conversation states
 WAITING_PASSWORD = 1
@@ -129,19 +153,15 @@ async def run_summary_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for coin in coins:
         try:
             summary = await generate_coin_summary(context, coin, "admin-test")
-            header = f"📊 *{coin['name']} ({coin['symbol']}) — Admin Test*\n{'━' * 30}\n\n"
+            header = f"📊 {coin['name']} ({coin['symbol']}) — Admin Test\n{'━' * 30}\n\n"
             full_msg = header + summary
 
             if len(full_msg) > 4000:
                 parts = [full_msg[i:i+4000] for i in range(0, len(full_msg), 4000)]
                 for part in parts:
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id, text=part, parse_mode="Markdown",
-                    )
+                    await _safe_send(context.bot, query.message.chat_id, part)
             else:
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id, text=full_msg, parse_mode="Markdown",
-                )
+                await _safe_send(context.bot, query.message.chat_id, full_msg)
         except Exception as e:
             logger.error(f"Admin summary failed for {coin['symbol']}: {e}")
             await context.bot.send_message(
