@@ -35,7 +35,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📅 *Scheduled Reports:*\n"
         "• 🌅 Morning summary — 8:00 AM MSK\n"
         "• 🌙 Evening summary — 11:00 PM MSK\n\n"
-        "📈 *Currently tracking:* OWB, Rainbow (RNBW)\n\n"
+        "📈 *Currently tracking:* OWB, Rainbow (RNBW) on Base chain\n"
+        "💱 All prices in USD/USDC from largest DEX pools\n\n"
         "Choose an option below to get started:"
     )
 
@@ -72,7 +73,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Admins can run test summaries from the admin panel\n\n"
         "📌 *Data Sources:*\n"
         "• 💹 CoinMarketCap — Market prices & volume\n"
-        "• 📊 DexScreener — DEX trading activity\n"
+        "• 📊 DexScreener — DEX pools on Base chain (USD/USDC)\n"
+        "• 🔗 BaseScan — On-chain token data\n"
         "• 🐦 Twitter/X — Social sentiment & news\n"
         "• 🤖 AI — Google Gemma via OpenRouter\n\n"
         "💡 *Tip:* The bot tracks buy/sell pressure, volume changes, "

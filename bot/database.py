@@ -99,12 +99,14 @@ class Database:
         """Seed default coins and AI templates if not present."""
         now = time.time()
 
-        # Default coins
+        # Default coins — Base chain with exact contract addresses
         default_coins = [
-            ("OWB", "OpenWorld", None, "OWB", None, None,
-             json.dumps(["owb", "#owb", "#OWB", "$OWB"])),
-            ("RNBW", "Rainbow", None, "rainbow token", None, None,
-             json.dumps(["rnbw", "rainbow", "#rnbw", "#rainbow", "#RNBW", "$RNBW"])),
+            ("OWB", "OWB (Clash of Coins)", None, "OWB", "base",
+             "0xef5997c2cf2f6c138196f8a6203afc335206b3c1",
+             json.dumps(["owb", "#owb", "#OWB", "$OWB", "clashofcoins"])),
+            ("RNBW", "Rainbow", None, "RNBW", "base",
+             "0xa53887f7e7c1bf5010b8627f1c1ba94fe7a5d6e0",
+             json.dumps(["rnbw", "rainbow", "#rnbw", "#rainbow", "#RNBW", "$RNBW", "rainbowdotme"])),
         ]
         for symbol, name, cmc_slug, dex_q, chain, addr, tw_q in default_coins:
             await self.db.execute(
@@ -116,13 +118,16 @@ class Database:
 
         # Default AI system template
         default_system = (
-            "You are a professional cryptocurrency analyst bot. "
+            "You are a professional cryptocurrency analyst bot specializing in Base chain tokens. "
             "You provide clear, concise, and actionable market summaries. "
+            "All prices are quoted in USD/USDC from the largest liquidity pools on Base chain DEXes.\n\n"
             "Analyze the provided data and generate a comprehensive summary including:\n"
-            "- Current price and price changes (daily)\n"
-            "- Trading volume and liquidity analysis\n"
-            "- Buy vs sell pressure analysis\n"
-            "- Notable transactions or whale activity\n"
+            "- Current price in USD/USDC and price changes (1h, 6h, 24h)\n"
+            "- Trading volume (24h, 6h, 1h) from the main USD/USDC pool\n"
+            "- Buy vs sell pressure analysis (transaction counts, buy/sell ratio)\n"
+            "- Liquidity depth in the main pool\n"
+            "- Market cap and FDV\n"
+            "- Notable transactions or whale activity signals\n"
             "- Social media sentiment from Twitter mentions\n"
             "- Key news and developments\n"
             "- Brief outlook and important levels to watch\n\n"
@@ -137,14 +142,19 @@ class Database:
         )
 
         default_summary_tpl = (
-            "Generate a {report_type} crypto market summary for {coin_name} ({coin_symbol}).\n\n"
+            "Generate a {report_type} crypto market summary for {coin_name} ({coin_symbol}) on Base chain.\n"
+            "All prices are in USD/USDC from the largest liquidity pools.\n\n"
             "=== MARKET DATA ===\n{market_data}\n\n"
-            "=== DEX DATA ===\n{dex_data}\n\n"
+            "=== DEX DATA (Base chain, USD/USDC pools sorted by liquidity) ===\n{dex_data}\n\n"
             "=== SOCIAL MEDIA / NEWS ===\n{twitter_data}\n\n"
             "=== AI MEMORY (learned context) ===\n{ai_memory}\n\n"
             "Provide a well-structured summary with all available metrics. "
-            "Use emojis for visual structure. Include buy/sell volumes, price change, "
-            "and any significant observations."
+            "Use emojis for visual structure. Include:\n"
+            "- Price in USD/USDC, changes over 1h/6h/24h\n"
+            "- Buy/sell volumes, transaction counts, buy ratio\n"
+            "- Liquidity depth and market cap\n"
+            "- Any significant buy/sell pressure signals\n"
+            "- Social sentiment and notable news"
         )
         await self.db.execute(
             """INSERT OR IGNORE INTO ai_templates (name, template, active, updated_at)
@@ -155,8 +165,11 @@ class Database:
         # Default AI memory entries
         defaults_memory = [
             ("analysis_style", "Professional, concise, data-driven with emoji formatting"),
-            ("target_audience", "Crypto traders and investors interested in OWB and Rainbow tokens"),
+            ("target_audience", "Crypto traders and investors interested in OWB and Rainbow tokens on Base chain"),
             ("language", "English with crypto terminology"),
+            ("owb_info", "OWB (Clash of Coins) on Base chain. Contract: 0xef5997c2cf2f6c138196f8a6203afc335206b3c1. Main pool: OWB/USDC on Uniswap v3."),
+            ("rnbw_info", "Rainbow (RNBW) on Base chain. Contract: 0xa53887f7e7c1bf5010b8627f1c1ba94fe7a5d6e0. Main pool: RNBW/USDC on Uniswap v4."),
+            ("pricing_note", "All prices are quoted in USD/USDC from the largest liquidity pools on Base chain DEXes."),
         ]
         for key, value in defaults_memory:
             await self.db.execute(

@@ -6,11 +6,19 @@ primary_region = "ams"
 
 [env]
   DB_PATH = "/data/bot.db"
+  PYTHONUNBUFFERED = "1"
 
 [mounts]
   source = "bot_data"
   destination = "/data"
 
+# The bot uses long-polling and scheduled jobs (APScheduler).
+# It only does work when:
+#   1. A user sends a command (Telegram polling picks it up)
+#   2. A scheduled summary fires (8 AM / 11 PM MSK)
+# Between events the process idles with near-zero CPU usage.
+
 [[vm]]
   size = "shared-cpu-1x"
   memory = "256mb"
+  cpus = 1
