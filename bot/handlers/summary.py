@@ -362,27 +362,25 @@ async def _fetch_news_text(context: ContextTypes.DEFAULT_TYPE) -> str:
             sections.append(f"  • {title}{src_tag}")
         sections.append("")
 
-    # --- Twitter/X (only if Apify key is configured) ---
-    if twitter.apify_api_key:
-        for coin in coins:
-            tw_queries: list[str] = []
-            if coin.get("twitter_queries"):
-                try:
-                    tw_queries = json.loads(coin["twitter_queries"])
-                except (json.JSONDecodeError, TypeError):
-                    tw_queries = [f"#{coin['symbol']}"]
+    # --- Twitter/X via Nitter RSS (free, no API key) ---
+    for coin in coins:
+        tw_queries: list[str] = []
+        if coin.get("twitter_queries"):
+            try:
+                tw_queries = json.loads(coin["twitter_queries"])
+            except (json.JSONDecodeError, TypeError):
+                tw_queries = [f"#{coin['symbol']}"]
 
-            tweets = await twitter.search_tweets(tw_queries, max_tweets=5)
-            if tweets:
-                sections.append(f"🐦 {coin['name']} ({coin['symbol']}) — Twitter/X")
-                for t in tweets[:5]:
-                    text = t.get("full_text") or t.get("text") or t.get("content") or "N/A"
-                    author = (t.get("user", {}).get("screen_name")
-                             or t.get("author", {}).get("userName") or "Unknown")
-                    if len(text) > 150:
-                        text = text[:150] + "..."
-                    sections.append(f"  • @{author}: {text}")
-                sections.append("")
+        tweets = await twitter.search_tweets(tw_queries, max_tweets=5)
+        if tweets:
+            sections.append(f"🐦 {coin['name']} ({coin['symbol']}) — Twitter/X")
+            for t in tweets[:5]:
+                text = t.get("text") or t.get("title") or "N/A"
+                author = t.get("author") or "Unknown"
+                if len(text) > 150:
+                    text = text[:150] + "..."
+                sections.append(f"  • @{author}: {text}")
+            sections.append("")
 
     if sections:
         msg = "📰 Latest News\n\n" + "\n".join(sections)

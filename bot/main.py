@@ -79,7 +79,13 @@ async def post_init(application: Application):
     # Initialize services
     application.bot_data["cmc"] = CoinMarketCapService(config.coinmarketcap_api_key)
     application.bot_data["dex"] = DexScreenerService()
-    application.bot_data["twitter"] = TwitterService(config.apify_api_key)
+    # Parse optional custom Nitter instances from env (comma-separated)
+    nitter_list = (
+        [u.strip() for u in config.nitter_instances.split(",") if u.strip()]
+        if config.nitter_instances
+        else None
+    )
+    application.bot_data["twitter"] = TwitterService(nitter_instances=nitter_list)
     application.bot_data["crypto_news"] = CryptoNewsService()
     application.bot_data["ai"] = AIAgent(config.openrouter_api_key, config.ai_model)
 
@@ -92,7 +98,7 @@ async def post_init(application: Application):
     logger.info("Bot initialized successfully!")
     logger.info(f"AI Model: {config.ai_model}")
     logger.info(f"CMC API: {'configured' if config.coinmarketcap_api_key else 'not set'}")
-    logger.info(f"Apify API: {'configured' if config.apify_api_key else 'not set'}")
+    logger.info(f"Nitter RSS: {len(application.bot_data['twitter'].instances)} instances configured")
     logger.info(f"OpenRouter API: {'configured' if config.openrouter_api_key else 'not set'}")
 
 

@@ -19,7 +19,7 @@ AI-powered Telegram bot that provides daily morning and evening cryptocurrency s
 |--------|------|
 | CoinMarketCap | Prices, market cap, volume, % changes |
 | DexScreener | DEX pairs, buy/sell transactions, liquidity |
-| Twitter/X (Apify) | Social sentiment, news, hashtag mentions |
+| Twitter/X (Nitter RSS) | Social sentiment, news, hashtag mentions |
 
 ## Setup
 
@@ -46,8 +46,8 @@ OPENROUTER_API_KEY=your_openrouter_api_key
 # Recommended
 COINMARKETCAP_API_KEY=your_cmc_api_key
 
-# Optional (for Twitter news)
-APIFY_API_KEY=your_apify_api_key
+# Optional (override default Nitter instances, comma-separated)
+# NITTER_INSTANCES=https://nitter.poast.org,https://xcancel.com
 
 # Admin password (default: admin123)
 ADMIN_PASSWORD=your_secure_password
@@ -86,11 +86,10 @@ python run.py
 2. Get your free API key from the dashboard
 3. Free tier allows 333 calls/day
 
-### Apify API Key (for Twitter data)
-1. Sign up at [apify.com](https://apify.com/)
-2. Go to Settings > Integrations
-3. Copy your API token
-4. The bot uses Twitter scraper actors to fetch tweets
+### Twitter/X Data (via Nitter RSS)
+No API key needed! The bot uses free Nitter RSS feeds to fetch tweets.
+Nitter instances are built-in with automatic fallback.
+Optionally override with `NITTER_INSTANCES` env var (comma-separated URLs).
 
 ## Deploy to Fly.io
 
@@ -120,8 +119,8 @@ fly secrets set TELEGRAM_BOT_TOKEN=your_token
 fly secrets set OPENROUTER_API_KEY=your_key
 fly secrets set COINMARKETCAP_API_KEY=your_key
 fly secrets set ADMIN_PASSWORD=your_password
-# Optional:
-fly secrets set APIFY_API_KEY=your_key
+# Optional (override Nitter instances):
+# fly secrets set NITTER_INSTANCES=https://nitter.poast.org,https://xcancel.com
 ```
 
 ### 5. Deploy
@@ -179,7 +178,7 @@ bot/
 └── services/
     ├── coinmarketcap.py # CoinMarketCap API client
     ├── dexscreener.py   # DexScreener API client
-    ├── twitter.py       # Twitter/Apify scraper
+    ├── twitter.py       # Twitter/X via Nitter RSS
     └── ai_agent.py      # OpenRouter AI agent
 ```
 

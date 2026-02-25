@@ -295,7 +295,7 @@ async def show_settings_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"🌙 Evening Report: 11:00 PM MSK (UTC+3)\n"
         f"💰 Support Address: `{config.support_address}`\n\n"
         f"📡 CoinMarketCap: {'✅' if config.coinmarketcap_api_key else '❌'}\n"
-        f"🐦 Twitter/Apify: {'✅' if config.apify_api_key else '❌'}\n"
+        f"🐦 Twitter/X: ✅ (Nitter RSS — free)\n"
         f"🤖 OpenRouter AI: {'✅' if config.openrouter_api_key else '❌'}\n"
     )
 
