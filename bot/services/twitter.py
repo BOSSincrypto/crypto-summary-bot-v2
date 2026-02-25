@@ -13,8 +13,8 @@ class TwitterService:
 
     def __init__(self, apify_api_key: str = ""):
         self.apify_api_key = apify_api_key
-        # Use a well-known free/cheap Twitter search actor
-        self.actor_id = "quacker/twitter-scraper"
+        # apidojo/tweet-scraper is the most popular Apify Twitter actor (37k+ users)
+        self.actor_id = "apidojo/tweet-scraper"
 
     async def search_tweets(self, queries: list[str], max_tweets: int = 20) -> list[dict]:
         """Search Twitter for mentions using Apify Twitter Scraper."""
@@ -61,7 +61,8 @@ class TwitterService:
                 if resp.status_code == 200:
                     data = resp.json()
                     if isinstance(data, list):
-                        return data
+                        # Filter out {"noResults": true} placeholders
+                        return [t for t in data if not t.get("noResults")]
                     return []
                 else:
                     logger.warning(
@@ -96,8 +97,10 @@ class TwitterService:
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    if isinstance(data, list) and data:
-                        return data
+                    if isinstance(data, list):
+                        filtered = [t for t in data if not t.get("noResults")]
+                        if filtered:
+                            return filtered
             except Exception as e:
                 logger.debug(f"Alt actor {actor} failed: {e}")
                 continue

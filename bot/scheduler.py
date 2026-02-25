@@ -2,8 +2,32 @@ import logging
 import json
 from datetime import time as dt_time
 from telegram.ext import ContextTypes
+from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
+
+
+async def _safe_send(bot, chat_id, text, reply_markup=None):
+    """Send message with Markdown, falling back to plain text on parse error."""
+    try:
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup,
+        )
+    except Exception as md_err:
+        logger.warning(f"Markdown send failed ({md_err}), retrying as plain text")
+        plain = text.replace('*', '').replace('_', '')
+        try:
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=plain,
+                reply_markup=reply_markup,
+            )
+        except Exception as plain_err:
+            logger.error(f"Plain-text send also failed: {plain_err}")
+            raise
 
 
 async def send_scheduled_summary(context: ContextTypes.DEFAULT_TYPE):
@@ -48,28 +72,20 @@ async def send_scheduled_summary(context: ContextTypes.DEFAULT_TYPE):
             for symbol, data in summaries.items():
                 header = ""
                 if report_type == "morning":
-                    header = f"🌅 *Morning Summary — {data['name']} ({symbol})*\n{'━' * 30}\n\n"
+                    header = f"🌅 Morning Summary — {data['name']} ({symbol})\n{'━' * 30}\n\n"
                 elif report_type == "evening":
-                    header = f"🌙 *Evening Summary — {data['name']} ({symbol})*\n{'━' * 30}\n\n"
+                    header = f"🌙 Evening Summary — {data['name']} ({symbol})\n{'━' * 30}\n\n"
                 else:
-                    header = f"📊 *{data['name']} ({symbol}) Summary*\n{'━' * 30}\n\n"
+                    header = f"📊 {data['name']} ({symbol}) Summary\n{'━' * 30}\n\n"
 
                 full_msg = header + data["summary"]
 
                 if len(full_msg) > 4000:
                     parts = [full_msg[i:i+4000] for i in range(0, len(full_msg), 4000)]
                     for part in parts:
-                        await context.bot.send_message(
-                            chat_id=user["telegram_id"],
-                            text=part,
-                            parse_mode="Markdown",
-                        )
+                        await _safe_send(context.bot, user["telegram_id"], part)
                 else:
-                    await context.bot.send_message(
-                        chat_id=user["telegram_id"],
-                        text=full_msg,
-                        parse_mode="Markdown",
-                    )
+                    await _safe_send(context.bot, user["telegram_id"], full_msg)
 
             success_count += 1
 
