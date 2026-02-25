@@ -1,8 +1,43 @@
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    BotCommand,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
+
+# Persistent reply-keyboard shown at the bottom of every chat
+PERSISTENT_KEYBOARD = ReplyKeyboardMarkup(
+    [
+        [KeyboardButton("💰 Price"), KeyboardButton("📊 Summary")],
+        [KeyboardButton("📰 News"), KeyboardButton("ℹ️ Help")],
+        [KeyboardButton("💎 Support Project")],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+# Commands to register with BotFather (shown in the / menu)
+BOT_COMMANDS = [
+    BotCommand("start", "Main menu"),
+    BotCommand("price", "Quick price check"),
+    BotCommand("summary", "AI-powered summary"),
+    BotCommand("help", "Help & tips"),
+    BotCommand("support", "Support the project"),
+    BotCommand("admin", "Admin panel"),
+    BotCommand("dev", "Developer panel"),
+]
+
+
+async def set_bot_commands(application):
+    """Register slash-commands with Telegram so they appear in the / menu."""
+    await application.bot.set_my_commands(BOT_COMMANDS)
+    logger.info("Bot commands registered with Telegram")
 
 
 def get_main_menu_keyboard():
@@ -40,9 +75,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Choose an option below to get started:"
     )
 
+    # Send with both the persistent bottom keyboard and inline menu
     await update.message.reply_text(
         welcome_text,
         parse_mode="Markdown",
+        reply_markup=PERSISTENT_KEYBOARD,
+    )
+    # Follow up with inline menu buttons
+    await update.message.reply_text(
+        "Choose an option:",
         reply_markup=get_main_menu_keyboard(),
     )
 
@@ -139,3 +180,28 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode="Markdown",
         reply_markup=get_main_menu_keyboard(),
     )
+
+
+async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Route persistent-keyboard button presses to the correct handler.
+
+    The bottom keyboard sends plain text messages like "💰 Price".
+    This handler maps them to the same logic as the slash commands.
+    """
+    from bot.handlers.summary import price_command, summary_command, news_command_text
+    from bot.handlers.support import support_command as _support_command
+
+    text = update.message.text.strip()
+
+    if text == "💰 Price":
+        await price_command(update, context)
+    elif text == "📊 Summary":
+        await summary_command(update, context)
+    elif text == "📰 News":
+        await news_command_text(update, context)
+    elif text == "ℹ️ Help":
+        await help_command(update, context)
+    elif text == "💎 Support Project":
+        await _support_command(update, context)
+    else:
+        await update.message.reply_text("Use the buttons below or type a /command.")
