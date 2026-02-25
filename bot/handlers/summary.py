@@ -1,10 +1,50 @@
 import json
 import logging
+import re
 import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
+
+# Characters that break Telegram MarkdownV2 if unescaped
+_MDVE_SPECIAL = re.compile(r'([_*\[\]()~`>#+\-=|{}.!])')
+
+
+def _escape_mdv2(text: str) -> str:
+    """Escape special characters for Telegram MarkdownV2."""
+    return _MDVE_SPECIAL.sub(r'\\\1', text)
+
+
+async def _safe_send(bot, chat_id, text, reply_markup=None):
+    """Send a message trying Markdown first, falling back to plain text.
+
+    AI-generated summaries often contain characters that break Telegram
+    Markdown parsing (unmatched *, _, [ etc.). This helper catches the
+    parse error and resends without formatting so the user always gets
+    the content.
+    """
+    try:
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup,
+        )
+    except Exception as md_err:
+        logger.warning(f"Markdown send failed ({md_err}), retrying as plain text")
+        # Strip markdown bold/italic markers so text is still readable
+        plain = text.replace('*', '').replace('_', '')
+        try:
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=plain,
+                reply_markup=reply_markup,
+            )
+        except Exception as plain_err:
+            logger.error(f"Plain-text send also failed: {plain_err}")
+            raise
 
 
 async def collect_coin_data(context: ContextTypes.DEFAULT_TYPE, coin: dict) -> dict:
@@ -175,7 +215,7 @@ async def summary_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             summary = await generate_coin_summary(context, coin, "on-demand")
             # Send as a new message (summaries can be long)
-            header = f"📊 *{coin['name']} ({coin['symbol']}) Summary*\n{'━' * 30}\n\n"
+            header = f"📊 {coin['name']} ({coin['symbol']}) Summary\n{'━' * 30}\n\n"
 
             # Split long messages (Telegram limit is 4096 chars)
             full_msg = header + summary
@@ -183,17 +223,9 @@ async def summary_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Send in parts
                 parts = [full_msg[i:i+4000] for i in range(0, len(full_msg), 4000)]
                 for part in parts:
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text=part,
-                        parse_mode="Markdown",
-                    )
+                    await _safe_send(context.bot, query.message.chat_id, part)
             else:
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=full_msg,
-                    parse_mode="Markdown",
-                )
+                await _safe_send(context.bot, query.message.chat_id, full_msg)
         except Exception as e:
             logger.error(f"Summary generation failed for {coin['symbol']}: {e}")
             await context.bot.send_message(
@@ -286,14 +318,11 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 lines.append(f"❓ *{coin['name']}* ({symbol}) — No data available\n")
 
-    await update.message.reply_text(
-        "\n".join(lines),
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Full Summary", callback_data="menu_summary")],
-            [InlineKeyboardButton("🔙 Menu", callback_data="menu_main")],
-        ]),
-    )
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Full Summary", callback_data="menu_summary")],
+        [InlineKeyboardButton("🔙 Menu", callback_data="menu_main")],
+    ])
+    await _safe_send(context.bot, update.message.chat_id, "\n".join(lines), reply_markup)
 
 
 async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -354,12 +383,8 @@ async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(msg) > 4000:
         msg = msg[:4000] + "\n..."
 
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text=msg,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Full Summary", callback_data="menu_summary")],
-            [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_main")],
-        ]),
-    )
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Full Summary", callback_data="menu_summary")],
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_main")],
+    ])
+    await _safe_send(context.bot, query.message.chat_id, msg, reply_markup)
