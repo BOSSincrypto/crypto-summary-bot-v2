@@ -340,28 +340,13 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _fetch_news_text(context: ContextTypes.DEFAULT_TYPE) -> str:
-    """Shared helper: build the news text from Twitter + available sources."""
-async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle news menu button — shows CryptoCompare news + Twitter if available."""
-    query = update.callback_query
-    await query.answer()
-
+    """Shared helper: build the news text from CryptoCompare + Twitter."""
     db = context.bot_data["db"]
     twitter = context.bot_data["twitter"]
     crypto_news = context.bot_data["crypto_news"]
 
     coins = await db.get_active_coins()
-    all_tweets_text: list[str] = []
-
-    if twitter.apify_api_key:
-        for coin in coins:
-            tw_queries: list[str] = []
-    await db.log_action(update.effective_user.id, "news_request")
-
-    await query.edit_message_text("⏳ Fetching latest crypto news...")
-
-    coins = await db.get_active_coins()
-    sections = []
+    sections: list[str] = []
 
     # --- CryptoCompare news (always available, free) ---
     all_keywords = []
@@ -380,7 +365,7 @@ async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- Twitter/X (only if Apify key is configured) ---
     if twitter.apify_api_key:
         for coin in coins:
-            tw_queries = []
+            tw_queries: list[str] = []
             if coin.get("twitter_queries"):
                 try:
                     tw_queries = json.loads(coin["twitter_queries"])
@@ -389,7 +374,6 @@ async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             tweets = await twitter.search_tweets(tw_queries, max_tweets=5)
             if tweets:
-                all_tweets_text.append(f"\n🪙 *{coin['name']}* ({coin['symbol']}):")
                 sections.append(f"🐦 {coin['name']} ({coin['symbol']}) — Twitter/X")
                 for t in tweets[:5]:
                     text = t.get("full_text") or t.get("text") or t.get("content") or "N/A"
@@ -397,10 +381,6 @@ async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                              or t.get("author", {}).get("userName") or "Unknown")
                     if len(text) > 150:
                         text = text[:150] + "..."
-                    all_tweets_text.append(f"  • @{author}: {text}")
-
-    if all_tweets_text:
-        msg = "📰 Latest News from Twitter/X\n" + "\n".join(all_tweets_text)
                     sections.append(f"  • @{author}: {text}")
                 sections.append("")
 
@@ -409,7 +389,7 @@ async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg = (
             "📰 Latest News\n\n"
-            "ℹ️ No Twitter data available at the moment.\n"
+            "ℹ️ No news data available at the moment.\n"
             "Use the Summary button for a full AI-powered report including "
             "market data, DEX activity, and news analysis."
         )
@@ -437,3 +417,19 @@ async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_main")],
     ])
     await _safe_send(context.bot, query.message.chat_id, msg, reply_markup)
+
+
+async def news_command_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the 📰 News keyboard button (plain text message)."""
+    db = context.bot_data["db"]
+    await db.log_action(update.effective_user.id, "news_request")
+
+    await update.message.reply_text("⏳ Fetching latest news...")
+
+    msg = await _fetch_news_text(context)
+
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Full Summary", callback_data="menu_summary")],
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_main")],
+    ])
+    await _safe_send(context.bot, update.message.chat_id, msg, reply_markup)
