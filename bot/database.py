@@ -103,10 +103,10 @@ class Database:
         default_coins = [
             ("OWB", "OWB (Clash of Coins)", None, "OWB", "base",
              "0xef5997c2cf2f6c138196f8a6203afc335206b3c1",
-             json.dumps(["owb", "#owb", "#OWB", "$OWB", "clashofcoins"])),
+             json.dumps(["owb", "#owb"])),
             ("RNBW", "Rainbow", None, "RNBW", "base",
              "0xa53887f7e7c1bf5010b8627f1c1ba94fe7a5d6e0",
-             json.dumps(["rnbw", "rainbow", "#rnbw", "#rainbow", "#RNBW", "$RNBW", "rainbowdotme"])),
+             json.dumps(["rnbw", "rainbow", "#rnbw"])),
         ]
         for symbol, name, cmc_slug, dex_q, chain, addr, tw_q in default_coins:
             await self.db.execute(
@@ -114,6 +114,12 @@ class Database:
                    (symbol, name, cmc_slug, dex_search_query, chain_id, token_address, twitter_queries, added_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (symbol, name, cmc_slug, dex_q, chain, addr, tw_q, now),
+            )
+            # Always update twitter_queries for default coins (ensures
+            # existing databases pick up the correct search terms)
+            await self.db.execute(
+                "UPDATE coins SET twitter_queries = ? WHERE symbol = ?",
+                (tw_q, symbol),
             )
 
         # Default AI system template
