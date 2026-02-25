@@ -19,6 +19,7 @@ from bot.services.coinmarketcap import CoinMarketCapService
 from bot.services.dexscreener import DexScreenerService
 from bot.services.twitter import TwitterService
 from bot.services.ai_agent import AIAgent
+from bot.services.crypto_news import CryptoNewsService
 from bot.handlers.start import (
     start_command,
     help_command,
@@ -79,6 +80,7 @@ async def post_init(application: Application):
     application.bot_data["cmc"] = CoinMarketCapService(config.coinmarketcap_api_key)
     application.bot_data["dex"] = DexScreenerService()
     application.bot_data["twitter"] = TwitterService(config.apify_api_key)
+    application.bot_data["crypto_news"] = CryptoNewsService()
     application.bot_data["ai"] = AIAgent(config.openrouter_api_key, config.ai_model)
 
     # Register slash-commands with Telegram (shown in the / menu)

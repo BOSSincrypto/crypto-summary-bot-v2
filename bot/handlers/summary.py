@@ -1,10 +1,50 @@
 import json
 import logging
+import re
 import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
+
+# Characters that break Telegram MarkdownV2 if unescaped
+_MDVE_SPECIAL = re.compile(r'([_*\[\]()~`>#+\-=|{}.!])')
+
+
+def _escape_mdv2(text: str) -> str:
+    """Escape special characters for Telegram MarkdownV2."""
+    return _MDVE_SPECIAL.sub(r'\\\1', text)
+
+
+async def _safe_send(bot, chat_id, text, reply_markup=None):
+    """Send a message trying Markdown first, falling back to plain text.
+
+    AI-generated summaries often contain characters that break Telegram
+    Markdown parsing (unmatched *, _, [ etc.). This helper catches the
+    parse error and resends without formatting so the user always gets
+    the content.
+    """
+    try:
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup,
+        )
+    except Exception as md_err:
+        logger.warning(f"Markdown send failed ({md_err}), retrying as plain text")
+        # Strip markdown bold/italic markers so text is still readable
+        plain = text.replace('*', '').replace('_', '')
+        try:
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=plain,
+                reply_markup=reply_markup,
+            )
+        except Exception as plain_err:
+            logger.error(f"Plain-text send also failed: {plain_err}")
+            raise
 
 
 async def collect_coin_data(context: ContextTypes.DEFAULT_TYPE, coin: dict) -> dict:
@@ -12,10 +52,12 @@ async def collect_coin_data(context: ContextTypes.DEFAULT_TYPE, coin: dict) -> d
     cmc = context.bot_data["cmc"]
     dex = context.bot_data["dex"]
     twitter = context.bot_data["twitter"]
+    crypto_news = context.bot_data["crypto_news"]
 
     symbol = coin["symbol"]
+    name = coin.get("name", symbol)
 
-    # Fetch data from all sources in parallel-ish manner
+    # Fetch data from all sources
     cmc_data = await cmc.get_quote(symbol)
     dex_pairs = await dex.get_token_data(coin)
 
@@ -29,13 +71,19 @@ async def collect_coin_data(context: ContextTypes.DEFAULT_TYPE, coin: dict) -> d
 
     tweets = await twitter.search_tweets(tw_queries, max_tweets=15)
 
+    # Crypto news (free, no API key needed)
+    news_keywords = [symbol.lower(), name.lower()]
+    news_articles = await crypto_news.fetch_news(news_keywords, limit=8)
+
     return {
         "cmc_data": cmc_data,
         "dex_pairs": dex_pairs,
         "tweets": tweets,
+        "news_articles": news_articles,
         "cmc_formatted": cmc.format_quote(cmc_data),
         "dex_formatted": dex.format_pair_data(dex_pairs),
         "twitter_formatted": twitter.format_tweets(tweets),
+        "news_formatted": crypto_news.format_news(news_articles, news_keywords),
     }
 
 
@@ -51,6 +99,11 @@ async def generate_coin_summary(
     # Collect data
     data = await collect_coin_data(context, coin)
 
+    # Combine Twitter + crypto news into one "news" section for AI
+    news_combined = data["twitter_formatted"]
+    if data.get("news_formatted"):
+        news_combined += "\n\n" + data["news_formatted"]
+
     # Generate AI summary
     summary = await ai.analyze_with_context(
         db=db,
@@ -59,7 +112,7 @@ async def generate_coin_summary(
         report_type=report_type,
         market_data=data["cmc_formatted"],
         dex_data=data["dex_formatted"],
-        twitter_data=data["twitter_formatted"],
+        twitter_data=news_combined,
     )
 
     # Save summary to database
@@ -67,6 +120,7 @@ async def generate_coin_summary(
         "cmc": data["cmc_formatted"],
         "dex": data["dex_formatted"],
         "twitter": data["twitter_formatted"],
+        "news": data.get("news_formatted", ""),
     }, default=str)
     await db.save_summary(coin["symbol"], report_type, summary, raw_data)
 
@@ -175,7 +229,7 @@ async def summary_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             summary = await generate_coin_summary(context, coin, "on-demand")
             # Send as a new message (summaries can be long)
-            header = f"📊 *{coin['name']} ({coin['symbol']}) Summary*\n{'━' * 30}\n\n"
+            header = f"📊 {coin['name']} ({coin['symbol']}) Summary\n{'━' * 30}\n\n"
 
             # Split long messages (Telegram limit is 4096 chars)
             full_msg = header + summary
@@ -183,17 +237,9 @@ async def summary_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Send in parts
                 parts = [full_msg[i:i+4000] for i in range(0, len(full_msg), 4000)]
                 for part in parts:
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text=part,
-                        parse_mode="Markdown",
-                    )
+                    await _safe_send(context.bot, query.message.chat_id, part)
             else:
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=full_msg,
-                    parse_mode="Markdown",
-                )
+                await _safe_send(context.bot, query.message.chat_id, full_msg)
         except Exception as e:
             logger.error(f"Summary generation failed for {coin['symbol']}: {e}")
             await context.bot.send_message(
@@ -286,20 +332,23 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 lines.append(f"❓ *{coin['name']}* ({symbol}) — No data available\n")
 
-    await update.message.reply_text(
-        "\n".join(lines),
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Full Summary", callback_data="menu_summary")],
-            [InlineKeyboardButton("🔙 Menu", callback_data="menu_main")],
-        ]),
-    )
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Full Summary", callback_data="menu_summary")],
+        [InlineKeyboardButton("🔙 Menu", callback_data="menu_main")],
+    ])
+    await _safe_send(context.bot, update.message.chat_id, "\n".join(lines), reply_markup)
 
 
 async def _fetch_news_text(context: ContextTypes.DEFAULT_TYPE) -> str:
     """Shared helper: build the news text from Twitter + available sources."""
+async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle news menu button — shows CryptoCompare news + Twitter if available."""
+    query = update.callback_query
+    await query.answer()
+
     db = context.bot_data["db"]
     twitter = context.bot_data["twitter"]
+    crypto_news = context.bot_data["crypto_news"]
 
     coins = await db.get_active_coins()
     all_tweets_text: list[str] = []
@@ -307,6 +356,31 @@ async def _fetch_news_text(context: ContextTypes.DEFAULT_TYPE) -> str:
     if twitter.apify_api_key:
         for coin in coins:
             tw_queries: list[str] = []
+    await db.log_action(update.effective_user.id, "news_request")
+
+    await query.edit_message_text("⏳ Fetching latest crypto news...")
+
+    coins = await db.get_active_coins()
+    sections = []
+
+    # --- CryptoCompare news (always available, free) ---
+    all_keywords = []
+    for coin in coins:
+        all_keywords.extend([coin["symbol"].lower(), coin.get("name", "").lower()])
+    articles = await crypto_news.fetch_news(all_keywords, limit=8)
+    if articles:
+        sections.append("📰 Crypto News Headlines\n")
+        for a in articles[:8]:
+            title = a.get("title", "No title")
+            source = a.get("source_info", {}).get("name", "") or a.get("source", "")
+            src_tag = f" ({source})" if source else ""
+            sections.append(f"  • {title}{src_tag}")
+        sections.append("")
+
+    # --- Twitter/X (only if Apify key is configured) ---
+    if twitter.apify_api_key:
+        for coin in coins:
+            tw_queries = []
             if coin.get("twitter_queries"):
                 try:
                     tw_queries = json.loads(coin["twitter_queries"])
@@ -316,6 +390,7 @@ async def _fetch_news_text(context: ContextTypes.DEFAULT_TYPE) -> str:
             tweets = await twitter.search_tweets(tw_queries, max_tweets=5)
             if tweets:
                 all_tweets_text.append(f"\n🪙 *{coin['name']}* ({coin['symbol']}):")
+                sections.append(f"🐦 {coin['name']} ({coin['symbol']}) — Twitter/X")
                 for t in tweets[:5]:
                     text = t.get("full_text") or t.get("text") or t.get("content") or "N/A"
                     author = (t.get("user", {}).get("screen_name")
@@ -326,6 +401,11 @@ async def _fetch_news_text(context: ContextTypes.DEFAULT_TYPE) -> str:
 
     if all_tweets_text:
         msg = "📰 Latest News from Twitter/X\n" + "\n".join(all_tweets_text)
+                    sections.append(f"  • @{author}: {text}")
+                sections.append("")
+
+    if sections:
+        msg = "📰 Latest News\n\n" + "\n".join(sections)
     else:
         msg = (
             "📰 Latest News\n\n"
@@ -334,6 +414,7 @@ async def _fetch_news_text(context: ContextTypes.DEFAULT_TYPE) -> str:
             "market data, DEX activity, and news analysis."
         )
 
+    # Trim if too long
     if len(msg) > 4000:
         msg = msg[:4000] + "\n..."
     return msg
@@ -351,29 +432,8 @@ async def news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = await _fetch_news_text(context)
 
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text=msg,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Full Summary", callback_data="menu_summary")],
-            [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_main")],
-        ]),
-    )
-
-
-async def news_command_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the 📰 News keyboard button (plain text message)."""
-    db = context.bot_data["db"]
-    await db.log_action(update.effective_user.id, "news_request")
-
-    await update.message.reply_text("⏳ Fetching latest news...")
-
-    msg = await _fetch_news_text(context)
-
-    await update.message.reply_text(
-        msg,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Full Summary", callback_data="menu_summary")],
-            [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_main")],
-        ]),
-    )
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Full Summary", callback_data="menu_summary")],
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_main")],
+    ])
+    await _safe_send(context.bot, query.message.chat_id, msg, reply_markup)
