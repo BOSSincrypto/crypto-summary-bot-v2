@@ -227,30 +227,49 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("⏳ Fetching prices...")
 
-    lines = ["💰 *Current Prices*\n"]
+    lines = ["💰 *Current Prices (Base chain, USD/USDC pools)*\n"]
 
     for coin in coins:
         symbol = coin["symbol"]
-        # Try DexScreener first (more likely to have smaller tokens)
+        token_addr = coin.get("token_address", "")
+        # Try DexScreener first (exact contract address on Base)
         dex_pairs = await dex.get_token_data(coin)
         if dex_pairs:
-            pair = dex_pairs[0]
+            pair = dex_pairs[0]  # Largest liquidity pool
             price = pair.get("priceUsd", "N/A")
             change_24h = pair.get("priceChange", {}).get("h24", "N/A")
+            change_1h = pair.get("priceChange", {}).get("h1", "N/A")
             volume = pair.get("volume", {}).get("h24", 0)
+            liquidity = pair.get("liquidity", {}).get("usd", 0)
             txns = pair.get("txns", {}).get("h24", {})
             buys = txns.get("buys", 0)
             sells = txns.get("sells", 0)
+            total_txns = buys + sells
+            buy_pct = (buys / total_txns * 100) if total_txns > 0 else 0
+            market_cap = pair.get("marketCap", 0)
+            quote_sym = pair.get("quoteToken", {}).get("symbol", "USD")
+            dex_name = pair.get("dexId", "DEX")
+            labels = pair.get("labels", [])
+            version = f" {', '.join(labels)}" if labels else ""
 
             arrow = "🟢" if str(change_24h).replace("-", "").replace("+", "") != "N/A" and float(str(change_24h).replace(",", "") or 0) >= 0 else "🔴"
 
-            lines.append(
+            basescan_link = f"https://basescan.org/token/{token_addr}" if token_addr else ""
+
+            mcap_line = f"   🏦 MCap: ${float(market_cap):,.0f}\n" if market_cap else ""
+            coin_text = (
                 f"{arrow} *{coin['name']}* ({symbol})\n"
-                f"   💲 Price: ${price}\n"
-                f"   📈 24h: {change_24h}%\n"
-                f"   📊 Vol: ${float(volume):,.0f}\n"
-                f"   🔄 Txns: {buys} buys / {sells} sells\n"
+                f"   💲 Price: ${price} (vs {quote_sym})\n"
+                f"   📈 1h: {change_1h}% | 24h: {change_24h}%\n"
+                f"   📊 Vol 24h: ${float(volume):,.0f}\n"
+                f"   💧 Liquidity: ${float(liquidity):,.0f}\n"
+                f"{mcap_line}"
+                f"   🔄 Txns 24h: {buys} buys / {sells} sells ({buy_pct:.0f}% buys)\n"
+                f"   🔗 Pool: {dex_name}{version} (Base)\n"
             )
+            lines.append(coin_text)
+            if basescan_link:
+                lines.append(f"   🔍 [BaseScan]({basescan_link})\n")
         else:
             # Try CoinMarketCap
             cmc_data = await cmc.get_quote(symbol)
