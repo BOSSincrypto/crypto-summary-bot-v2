@@ -25,6 +25,8 @@ from bot.handlers.start import (
     help_command,
     settings_callback,
     main_menu_callback,
+    set_bot_commands,
+    keyboard_button_handler,
 )
 from bot.handlers.summary import (
     summary_command,
@@ -80,6 +82,9 @@ async def post_init(application: Application):
     application.bot_data["twitter"] = TwitterService(config.apify_api_key)
     application.bot_data["crypto_news"] = CryptoNewsService()
     application.bot_data["ai"] = AIAgent(config.openrouter_api_key, config.ai_model)
+
+    # Register slash-commands with Telegram (shown in the / menu)
+    await set_bot_commands(application)
 
     # Set up scheduled jobs
     setup_schedules(application.job_queue)
@@ -179,6 +184,12 @@ def create_app(config: Config) -> Application:
 
     # Callback queries - support
     application.add_handler(CallbackQueryHandler(support_copy_callback, pattern="^support_copy$"))
+
+    # Persistent keyboard button handler (matches emoji-prefixed button labels)
+    application.add_handler(MessageHandler(
+        filters.Regex(r'^(💰 Price|📊 Summary|📰 News|ℹ️ Help|💎 Support Project)$'),
+        keyboard_button_handler,
+    ))
 
     # Text input handler for developer flows (must be last)
     application.add_handler(MessageHandler(
