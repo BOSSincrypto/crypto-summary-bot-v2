@@ -1,16 +1,23 @@
-app = "crypto-summary-bot-v2"
-primary_region = "ams"
+# fly.toml app configuration file generated for crypto-summary-bot-v2 on 2026-02-25T12:54:02Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'crypto-summary-bot-v2'
+primary_region = 'ams'
 
 [build]
-  dockerfile = "Dockerfile"
 
-[env]
-  DB_PATH = "/data/bot.db"
-
-[mounts]
-  source = "bot_data"
-  destination = "/data"
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256
