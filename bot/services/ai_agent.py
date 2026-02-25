@@ -88,8 +88,19 @@ class AIAgent:
         summary_template = await db.get_template("summary_template")
         if not summary_template:
             summary_template = (
-                "Generate a {report_type} summary for {coin_name} ({coin_symbol}).\n\n"
-                "Market Data:\n{market_data}\n\nDEX Data:\n{dex_data}\n\n"
+                "Generate a {report_type} summary for {coin_name} ({coin_symbol}) on Base chain.\n"
+                "All prices are in USD/USDC from the largest liquidity pools.\n\n"
+                "Include in the summary:\n"
+                "- Current price (USD/USDC)\n"
+                "- Price changes (1h, 6h, 24h)\n"
+                "- Trading volume (24h, 6h, 1h)\n"
+                "- Buy/sell ratio and transaction counts\n"
+                "- Liquidity depth in the main pool\n"
+                "- Market cap and FDV\n"
+                "- Notable buy/sell pressure signals\n"
+                "- Social media sentiment and news\n"
+                "- Overall market outlook\n\n"
+                "Market Data:\n{market_data}\n\nDEX Data (Base chain, USD/USDC pools):\n{dex_data}\n\n"
                 "Social Media:\n{twitter_data}\n\nAI Memory:\n{ai_memory}"
             )
 
